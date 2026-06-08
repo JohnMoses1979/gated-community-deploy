@@ -1,0 +1,72 @@
+name: Deploy Gated Community App
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: gated-community-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy backend and frontend only
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        run: |
+          ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -i ~/.ssh/ec2_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" "echo SSH connected successfully"
+
+      - name: Deploy backend and frontend
+        run: |
+          ssh -o StrictHostKeyChecking=no -o IdentitiesOnly=yes -i ~/.ssh/ec2_key "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'DEPLOY'
+            set -e
+
+            echo "==== Go to project ===="
+            cd ~/gated-community-deploy
+
+            echo "==== Pull latest code ===="
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "==== Check env files ===="
+            test -f .env || (echo "ERROR: root .env missing" && exit 1)
+            test -f backend/.env || (echo "ERROR: backend/.env missing" && exit 1)
+
+            echo "==== Check MySQL health only ===="
+            MYSQL_STATUS=$(sudo docker inspect --format='{{.State.Health.Status}}' gated_mysql 2>/dev/null || echo "missing")
+            echo "MySQL status: $MYSQL_STATUS"
+
+            if [ "$MYSQL_STATUS" != "healthy" ]; then
+              echo "ERROR: MySQL is not healthy. CI/CD stopped safely."
+              sudo docker ps -a
+              exit 1
+            fi
+
+            echo "==== Build backend and frontend ===="
+            sudo docker compose build backend frontend
+
+            echo "==== Recreate backend and frontend only ===="
+            sudo docker compose up -d --no-deps --force-recreate backend frontend
+
+            echo "==== Docker status ===="
+            sudo docker ps
+
+            echo "==== Backend test ===="
+            curl -I http://localhost:8080 || true
+
+            echo "==== Deployment completed successfully ===="
+          DEPLOY

@@ -1,0 +1,75 @@
+
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: gated_mysql
+    restart: unless-stopped
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+
+    ports:
+      - "127.0.0.1:3306:3306"
+
+    volumes:
+      - gated_mysql_data:/var/lib/mysql
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+    networks:
+      - gated_network
+
+  backend:
+    container_name: gated_backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    env_file:
+      - ./backend/.env
+
+    ports:
+      - "${BACKEND_PORT}:8080"
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+    networks:
+      - gated_network
+
+  frontend:
+    container_name: gated_frontend
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        EXPO_PUBLIC_API_BASE_URL: ${EXPO_PUBLIC_API_BASE_URL}
+
+    restart: unless-stopped
+
+    ports:
+      - "${FRONTEND_PORT}:80"
+
+    depends_on:
+      - backend
+
+    networks:
+      - gated_network
+
+volumes:
+  gated_mysql_data:
+
+networks:
+  gated_network:
+    driver: bridge

@@ -1,0 +1,10 @@
+node_modules
+.expo
+.git
+.gitignore
+backend
+dist
+web-build
+npm-debug.log
+.env
+
